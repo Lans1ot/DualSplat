@@ -149,6 +149,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
         filtered_mask = viewpoint_cam.get_filtered_mask(os.path.join(args.source_path, args.filtered_masks, image_name)).cuda().float()
         filtered_mask = interpolation(filtered_mask.unsqueeze(0), image.shape[1], image.shape[2]).float()
+        loss_mask = None
 
         # MLP eval for masked loss calculation
         if opt.disable_mask or iteration < opt.mask_beginning:
@@ -161,11 +162,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         else:
             mono_invdepth = viewpoint_cam.invdepthmap.cuda()
-            # invDepth = render_pkg["depth"]
+            invDepth = render_pkg["depth"]
+            depth_residual = mono_invdepth.detach() - invDepth.detach()
 
             mlp_model.eval()
             upsample_feature = interpolation(features_fine[viewpoint_cam.image_name], image.shape[1], image.shape[2])
-            mask = mlp_model(upsample_feature, mono_invdepth.detach())
+            mask = mlp_model(upsample_feature, depth_residual)
 
             loss_mask = mask.clone().detach() > 0.2
             loss_mask = -F.max_pool2d(-(loss_mask.float().unsqueeze(0)), kernel_size=7, stride=1, padding=3).squeeze(0)
@@ -183,17 +185,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         Ll1depth_pure = 0.0
         Ll1depth = 0.0
 
-        # if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
-        #     invDepth = render_pkg["depth"]
-        #     mono_invdepth = viewpoint_cam.invdepthmap.cuda()
-        #     depth_mask = viewpoint_cam.depth_mask.cuda()
+        if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
+            invDepth = render_pkg["depth"]
+            mono_invdepth = viewpoint_cam.invdepthmap.cuda()
+            depth_mask = viewpoint_cam.depth_mask.cuda()
+            
+            mask_ = loss_mask.detach() if loss_mask is not None else filtered_mask
 
-        #     Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask).mean()
-        #     Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
-        #     loss += Ll1depth
-        #     Ll1depth = Ll1depth.item()
-        # else:
-        #     Ll1depth = 0
+            Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask * mask_).mean()
+            Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
+            loss += Ll1depth
+            Ll1depth = Ll1depth.item()
+        else:
+            Ll1depth = 0
 
         loss.backward()
 
@@ -234,10 +238,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             mask_loss.backward()
 
-            import torchvision.utils as tutils
-            output_path = os.path.join("./try", args.model_path.split('/')[-1])
-            os.makedirs(output_path, exist_ok=True)
-            tutils.save_image(loss_mask.float(), os.path.join(output_path, f"{image_name}.png"))
+            # import torchvision.utils as tutils
+            # output_path = os.path.join("./try", args.model_path.split('/')[-1])
+            # os.makedirs(output_path, exist_ok=True)
+            # tutils.save_image(loss_mask.float(), os.path.join(output_path, f"{image_name}.png"))
             
             mlp_optimizer.step()
             mlp_optimizer.zero_grad(set_to_none=True)
@@ -354,6 +358,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
 
 if __name__ == "__main__":
     # Set up command line argument parser
+    print("train mlp with depth residual trial 2")
     parser = ArgumentParser(description="Training script parameters")
     lp = ModelParams(parser)
     op = OptimizationParams(parser)

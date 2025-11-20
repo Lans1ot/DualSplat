@@ -61,7 +61,7 @@ class Camera(nn.Module):
         self.depth_reliable = False
         if invdepthmap is not None:
             self.depth_mask = torch.ones_like(self.alpha_mask)
-            self.invdepthmap = cv2.resize(invdepthmap, resolution)
+            self.invdepthmap = cv2.resize(invdepthmap, (self.image_width, self.image_height))
             self.invdepthmap[self.invdepthmap < 0] = 0
             self.depth_reliable = True
 
@@ -87,12 +87,28 @@ class Camera(nn.Module):
         self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
         self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
+        self.filtered_mask = None
         
     def get_filtered_mask(self, mask_path):
-        mask_path = mask_path.split(".")[0] + ".npy"
-        mask = np.load(mask_path)
-        res = torch.from_numpy(mask) == 0
-        res = res.requires_grad_(False)
+        if self.filtered_mask == None:
+            mask_path = mask_path.split(".")[0] + ".npy"
+            mask = np.load(mask_path)
+            res = torch.from_numpy(mask) == 0
+            res = res.requires_grad_(False)
+            self.filtered_mask = res.cuda()
+        else:
+            res = self.filtered_mask
+        return res
+
+    def get_filtered_mask_(self, mask_path):
+        if self.filtered_mask == None:
+            mask_path = mask_path.split(".")[0] + "_selected_mask.npy"
+            mask = np.load(mask_path)
+            res = torch.from_numpy(mask) == 0
+            res = res.requires_grad_(False)
+            self.filtered_mask = res.cuda()
+        else:
+            res = self.filtered_mask
         return res
 
     def get_origin_mask(self, mask_path):

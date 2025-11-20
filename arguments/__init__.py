@@ -59,6 +59,10 @@ class ModelParams(ParamGroup):
         self.train_test_exp = False
         self.data_device = "cuda"
         self.eval = False
+        self.gaussiansN = 1
+        self.coreg = False
+        self.coprune = False
+        self.not_only_rgb = False
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -107,6 +111,12 @@ class OptimizationParams(ParamGroup):
         self.beta_reg = 2000
         self.random_background = False
         self.optimizer_type = "default"
+        self.start_sample_pseudo = 5_000
+        self.end_sample_pseudo = 20_000
+        self.sample_pseudo_interval = 1
+        self.coprune_interval = 500
+        self.coprune_threshold = 5
+        self.feat_res = 32
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

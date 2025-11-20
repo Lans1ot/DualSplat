@@ -68,27 +68,32 @@ class MLPModel_2(nn.Module):
     def __init__(self):
         super(MLPModel_2, self).__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(384, 64),
+            nn.Linear(384, 16),
             nn.ReLU(),
-            nn.BatchNorm1d(64),
-            nn.Linear(64, 16),
-            nn.ReLU(),
-            nn.Linear(16, 1),
+            nn.Linear(16, 8),
+            nn.Sigmoid(),
+        )
+
+        self.mlp_2 = nn.Sequential(
+            nn.Linear(9, 1),
             nn.Sigmoid(),
         )
     
     def get_regularizer(self):
-        return torch.max(abs(self.mlp[0].weight.data)) * torch.max(abs(self.mlp[2].weight.data))
+        return torch.max(abs(self.mlp[0].weight.data)) * torch.max(abs(self.mlp[2].weight.data)) + torch.max(abs(self.mlp_2[0].weight.data))
 
     def get_residual_loss(self, mask, lower_mask, upper_mask):
         return torch.mean(nn.ReLU()(mask - upper_mask) + nn.ReLU()(lower_mask - mask))
 
-    def forward(self, features):
+    def forward(self, features, depth_residual):
         x = features.reshape(features.shape[0], -1).permute(1, 0)
         x = self.mlp(x)
+
+        depth_residual = depth_residual.reshape(1, -1).permute(1, 0)
+
+        x = self.mlp_2(torch.concat([x, depth_residual], dim=-1))
         x = x.reshape(features.shape[1], features.shape[2], -1).permute(2, 0, 1)
         return x
-    
 
 def generate_mask(residual, threshold):
     inlier_pixel = (residual < threshold).float().unsqueeze(0).unsqueeze(0)
