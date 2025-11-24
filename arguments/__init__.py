@@ -104,6 +104,7 @@ class OptimizationParams(ParamGroup):
         self.depth_l1_weight_final = 0.01
         self.disable_mask = False
         self.mask_beginning = 500
+        self.mask_lr = 1e-3
         self.upper_feat_res = 36
         self.lower_feat_res = 16
         self.bootstrap_iter = 20_000

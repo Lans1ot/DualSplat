@@ -12,7 +12,6 @@
 import os
 import torch
 import torch.nn.functional as F
-import torch.nn as nn
 import torch.optim as optim
 import math
 from random import randint
@@ -20,8 +19,10 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state, get_expon_lr_func, normalize_to_01
-from utils.mask_utils import calculate_residual_mask, interpolation
+from utils.general_utils import safe_state, get_expon_lr_func
+from utils.mask_utils import MLPModel, calculate_residual_mask, interpolation
+from utils.mask_utils import MLPModel_2
+#from utils.mask_utils import DINOFinetune_FeatureExtractor as DINOFeatureExtractor
 from utils.mask_utils import DINOFeatureExtractor
 import uuid
 from tqdm import tqdm
@@ -40,7 +41,16 @@ try:
 except:
     FUSED_SSIM_AVAILABLE = False
 
+try:
+    from diff_gaussian_rasterization import SparseGaussianAdam
+    SPARSE_ADAM_AVAILABLE = True
+except:
+    SPARSE_ADAM_AVAILABLE = False
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+
+    if not SPARSE_ADAM_AVAILABLE and opt.optimizer_type == "sparse_adam":
+        sys.exit(f"Trying to use sparse adam but it is not installed, please install the correct rasterizer using pip install [3dgs_accel].")
 
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -58,6 +68,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
+    use_sparse_adam = opt.optimizer_type == "sparse_adam" and SPARSE_ADAM_AVAILABLE 
     depth_l1_weight = get_expon_lr_func(opt.depth_l1_weight_init, opt.depth_l1_weight_final, max_steps=opt.iterations)
 
     viewpoint_stack = scene.getTrainCameras().copy()
@@ -66,20 +77,37 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     ema_Ll1depth_for_log = 0.0
 
-    feature_extractor = DINOFeatureExtractor().cuda()
-    features_fine, features_coarse = {}, {}
-    for cam in tqdm(scene.getTrainCameras(), desc=f"DINOv2 GT Feature Extraction"):
-        features_fine[cam.image_name] = feature_extractor(cam.original_image.cuda(), opt.upper_feat_res).cpu()
-        features_coarse[cam.image_name] = feature_extractor(cam.original_image.cuda(), opt.lower_feat_res).cpu()
+    # Prepare for mask estimation
+    if not opt.disable_mask:
+        feature_extractor = DINOFeatureExtractor().cuda()
+        features_fine, features_coarse = {}, {}
+        for cam in tqdm(scene.getTrainCameras(), desc=f"DINOv2 GT Feature Extraction"):
+            features_fine[cam.image_name] = feature_extractor(cam.original_image.cuda(), opt.upper_feat_res).cpu()
+            features_coarse[cam.image_name] = feature_extractor(cam.original_image.cuda(), opt.lower_feat_res).cpu()
 
-    learnable_masks = {
-        cam.image_name: torch.ones((1, cam.image_height, cam.image_width)).cuda().requires_grad_(True) for cam in scene.train_cameras[1.0]}
-    learnable_mask_optimizer = torch.optim.Adam([item for item in learnable_masks.values()], lr=opt.mask_lr)
-    historical_hist = torch.zeros((10000)).cuda()
+        #mlp_model = MLPModel().to(device="cuda")
+        mlp_model = MLPModel_2().to(device="cuda")
+        mlp_optimizer = optim.Adam(mlp_model.parameters(), lr=1e-3)
+        historical_hist = torch.zeros((10000)).cuda()
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):
+        if network_gui.conn == None:
+            network_gui.try_connect()
+        while network_gui.conn != None:
+            try:
+                net_image_bytes = None
+                custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
+                if custom_cam != None:
+                    net_image = render(custom_cam, gaussians, pipe, background, scaling_modifier=scaling_modifer, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)["render"]
+                    net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
+                network_gui.send(net_image_bytes, dataset.source_path)
+                if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
+                    break
+            except Exception as e:
+                network_gui.conn = None
+
         iter_start.record()
 
         gaussians.update_learning_rate(iteration)
@@ -104,11 +132,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         # coarse scale rendering
-        if iteration < opt.bootstrap_iter:
-            coarse_image = render(coarse_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp)["render"]
+        if not opt.disable_mask and iteration < opt.bootstrap_iter:
+            coarse_image = render(coarse_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)["render"]
             coarse_gt = coarse_cam.original_image.cuda()
 
         if viewpoint_cam.alpha_mask is not None:
@@ -124,7 +152,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         loss_mask = None
 
         # MLP eval for masked loss calculation
-        if iteration < opt.mask_beginning:
+        if opt.disable_mask or iteration < opt.mask_beginning:
             Ll1 = l1_loss(image * filtered_mask, gt_image * filtered_mask)
             if FUSED_SSIM_AVAILABLE:
                 ssim_value = fused_ssim((image * filtered_mask).unsqueeze(0), (gt_image * filtered_mask).unsqueeze(0))
@@ -137,8 +165,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             invDepth = render_pkg["depth"]
             depth_residual = mono_invdepth.detach() - invDepth.detach()
 
-            mask = torch.sigmoid(learnable_masks[viewpoint_cam.image_name])
-            loss_mask = mask.clone().detach() > 0.25
+            mlp_model.eval()
+            upsample_feature = interpolation(features_fine[viewpoint_cam.image_name], image.shape[1], image.shape[2])
+            mask = mlp_model(upsample_feature, depth_residual)
+
+            loss_mask = mask.clone().detach() > 0.2
             loss_mask = -F.max_pool2d(-(loss_mask.float().unsqueeze(0)), kernel_size=7, stride=1, padding=3).squeeze(0)
 
             Ll1 = (loss_mask * torch.abs((image - gt_image))).mean()
@@ -174,6 +205,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         reset_start = iteration // opt.opacity_reset_interval * opt.opacity_reset_interval
         reset_end = reset_start + 300
         if not opt.disable_mask and iteration >= opt.mask_beginning and (not((iteration>reset_start) and (iteration<reset_end) and (iteration>=opt.reset_iter))):
+            mlp_model.train()            
+
             if iteration < opt.bootstrap_iter:
                 gt_feature = features_coarse[viewpoint_cam.image_name].cuda()
                 render_feature = feature_extractor(image.detach(),opt.lower_feat_res) 
@@ -185,17 +218,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             lower_mask = interpolation(lower_mask, image.shape[1], image.shape[2])
             upper_mask = interpolation(upper_mask, image.shape[1], image.shape[2])
 
-            cosine = (1. - F.cosine_similarity(gt_feature, render_feature, dim=0).unsqueeze(0).sub(0.5).div(0.5)).clip(0.,1.)
-            cosine = normalize_to_01(cosine)
-
+            cosine = (1.-F.cosine_similarity(gt_feature, render_feature, dim=0).unsqueeze(0).sub(0.5).div(0.5)).clip(0.,1.)
             cosine = 1. - interpolation(cosine, image.shape[1], image.shape[2])
 
+            reg_loss = 0.5 * mlp_model.get_regularizer()
+            #reg_loss += 2.0 * ((1-mask) * math.exp(-iteration / opt.beta_reg)).mean()
+            
             prior_loss = (torch.abs(filtered_mask - mask)).mean() * math.exp(-iteration / 10000)
 
-            def get_residual_loss(mask, lower_mask, upper_mask):
-                return torch.mean(nn.ReLU()(mask - upper_mask) + nn.ReLU()(lower_mask - mask))
-
-            residual_loss = get_residual_loss(mask.flatten(), lower_mask.flatten(), upper_mask.flatten())
+            residual_loss = mlp_model.get_residual_loss(mask.flatten(), lower_mask.flatten(), upper_mask.flatten())
             cosine_loss = torch.abs(mask - cosine).mean()
 
             robustness_loss = 0.5 * cosine_loss + 0.5 * residual_loss
@@ -203,17 +234,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if(iteration <= opt.densify_from_iter):
                 robustness_loss = robustness_loss * math.exp((iteration - opt.densify_from_iter) / 10000)
 
-            mask_loss = robustness_loss + prior_loss
+            mask_loss = robustness_loss + reg_loss + prior_loss
 
             mask_loss.backward()
 
-            import torchvision.utils as tutils
-            output_path = os.path.join("./try", args.model_path.split('/')[-1])
-            os.makedirs(output_path, exist_ok=True)
-            tutils.save_image(loss_mask.float(), os.path.join(output_path, f"{image_name}.png"))
+            # import torchvision.utils as tutils
+            # output_path = os.path.join("./try", args.model_path.split('/')[-1])
+            # os.makedirs(output_path, exist_ok=True)
+            # tutils.save_image(loss_mask.float(), os.path.join(output_path, f"{image_name}.png"))
             
-            learnable_mask_optimizer.step()
-            learnable_mask_optimizer.zero_grad(set_to_none=True)
+            mlp_optimizer.step()
+            mlp_optimizer.zero_grad(set_to_none=True)
 
         iter_end.record()
 
@@ -229,7 +260,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, 1., False, None, dataset.train_test_exp), dataset.train_test_exp)
+            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, 1., SPARSE_ADAM_AVAILABLE, None, dataset.train_test_exp), dataset.train_test_exp)
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -251,8 +282,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if iteration < opt.iterations:
                 gaussians.exposure_optimizer.step()
                 gaussians.exposure_optimizer.zero_grad(set_to_none = True)
-                gaussians.optimizer.step()
-                gaussians.optimizer.zero_grad(set_to_none = True)
+                if use_sparse_adam:
+                    visible = radii > 0
+                    gaussians.optimizer.step(visible, radii.shape[0])
+                    gaussians.optimizer.zero_grad(set_to_none = True)
+                else:
+                    gaussians.optimizer.step()
+                    gaussians.optimizer.zero_grad(set_to_none = True)
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
@@ -334,6 +370,7 @@ if __name__ == "__main__":
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument('--disable_viewer', action='store_true', default=False)
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[30_000])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
@@ -344,6 +381,9 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
+    # Start GUI server, configure and run training
+    if not args.disable_viewer:
+        network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
 
