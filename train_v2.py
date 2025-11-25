@@ -171,9 +171,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             loss_mask = mask.clone().detach() > 0.2
             loss_mask = -F.max_pool2d(-(loss_mask.float().unsqueeze(0)), kernel_size=7, stride=1, padding=3).squeeze(0)
+            
+            image_ = image * loss_mask + image.detach() * (1 - loss_mask)
 
-            Ll1 = (loss_mask * torch.abs((image - gt_image))).mean()
-            Lssim = (1.0 - ssim((loss_mask * image), (loss_mask * gt_image), size_average=False)).mean()
+            # Ll1 = (loss_mask * torch.abs((image - gt_image))).mean()
+            # Lssim = (1.0 - ssim((loss_mask * image), (loss_mask * gt_image), size_average=False)).mean()
+            Ll1 = torch.abs((image_ - gt_image)).mean()
+            Lssim = (1.0 - ssim(image_, gt_image, size_average=False)).mean()
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * Lssim
 
             # import torchvision.utils as tutils
