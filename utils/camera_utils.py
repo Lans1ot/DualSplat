@@ -252,3 +252,47 @@ def visualizer(camera_poses, colors, save_path="/mnt/data/1.png"):
     plt.close()
 
     return save_path
+
+import torch
+@torch.no_grad()
+def camera_nearest_neighbor_dists(cameras, device=None, chunk=2048, dtype=torch.float32):
+    """
+    返回 nn_dists: shape [N]，第 i 个元素是第 i 个相机到最近其他相机的距离。
+    用 chunked torch.cdist，避免一次性 NxN 距离矩阵爆显存/内存。
+    """
+    if device is None:
+        device = cameras[0].data_device
+
+    centers = []
+    for cam in cameras:
+        c = cam.camera_center
+        if not torch.is_tensor(c):
+            c = torch.tensor(c)
+        centers.append(c.detach().reshape(3))
+
+    X = torch.stack(centers, dim=0).to(device=device, dtype=dtype)  # [N,3]
+    N = X.shape[0]
+    if N < 2:
+        raise ValueError("Need at least 2 cameras to compute nearest-neighbor distances.")
+
+    nn = torch.empty((N,), device=device, dtype=dtype)
+
+    for start in range(0, N, chunk):
+        end = min(start + chunk, N)
+        D = torch.cdist(X[start:end], X)  # [B,N]
+
+        # 把“自己到自己”的距离设为 +inf，避免 min 选到 0
+        rows = torch.arange(end - start, device=device)
+        cols = torch.arange(start, end, device=device)
+        D[rows, cols] = float("inf")
+
+        nn[start:end] = D.min(dim=1).values
+
+    return nn.detach().cpu()
+
+def calc_voxel_size(cameras, min_size=0.1, quantile=0.2, device=None, chunk=2048, dtype=torch.float32):
+    nn_dists = camera_nearest_neighbor_dists(cameras, device=device, chunk=chunk, dtype=dtype)
+    voxel_size = float(torch.quantile(nn_dists, quantile).item())
+    voxel_size = max(voxel_size // 0.05 * 0.05, min_size)
+    print(f"voxel_size : {voxel_size:.4f} (quantile {quantile}, min_size {min_size})")
+    return voxel_size

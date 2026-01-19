@@ -20,10 +20,7 @@ from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state, get_expon_lr_func
-from utils.mask_utils import MLPModel, calculate_residual_mask, interpolation
-from utils.mask_utils import MLPModel_2
-#from utils.mask_utils import DINOFinetune_FeatureExtractor as DINOFeatureExtractor
-from utils.mask_utils import DINOFeatureExtractor
+from utils.mask_utils import DINOFeatureExtractor, MLPModel, calculate_residual_mask, interpolation
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
@@ -85,8 +82,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             features_fine[cam.image_name] = feature_extractor(cam.original_image.cuda(), opt.upper_feat_res).cpu()
             features_coarse[cam.image_name] = feature_extractor(cam.original_image.cuda(), opt.lower_feat_res).cpu()
 
-        #mlp_model = MLPModel().to(device="cuda")
-        mlp_model = MLPModel_2().to(device="cuda")
+        mlp_model = MLPModel().to(device="cuda")
         mlp_optimizer = optim.Adam(mlp_model.parameters(), lr=1e-3)
         historical_hist = torch.zeros((10000)).cuda()
 
@@ -131,6 +127,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             pipe.debug = True
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
+        image_name = viewpoint_cam.image_name
+        image_name = image_name if image_name.find(".") != -1 else image_name + ".png"
+
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
@@ -144,56 +143,39 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             image *= alpha_mask
         gt_image = viewpoint_cam.original_image.cuda()
 
-        image_name = viewpoint_cam.image_name
-        image_name = image_name if image_name.find(".") != -1 else image_name + ".png"
-        
-        filtered_mask = viewpoint_cam.get_filtered_mask(os.path.join(args.source_path, args.filtered_masks, image_name)).cuda().float()
-        filtered_mask = interpolation(filtered_mask.unsqueeze(0), image.shape[1], image.shape[2]).float()
-
         # MLP eval for masked loss calculation
         if opt.disable_mask or iteration < opt.mask_beginning:
-            Ll1 = l1_loss(image * filtered_mask, gt_image * filtered_mask)
+            Ll1 = l1_loss(image, gt_image)
             if FUSED_SSIM_AVAILABLE:
-                ssim_value = fused_ssim((image * filtered_mask).unsqueeze(0), (gt_image * filtered_mask).unsqueeze(0))
+                ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
             else:
-                ssim_value = ssim(image * filtered_mask, gt_image * filtered_mask)
+                ssim_value = ssim(image, gt_image)
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
-
         else:
-            mono_invdepth = viewpoint_cam.invdepthmap.cuda()
-            # invDepth = render_pkg["depth"]
-
             mlp_model.eval()
             upsample_feature = interpolation(features_fine[viewpoint_cam.image_name], image.shape[1], image.shape[2])
-            mask = mlp_model(upsample_feature, mono_invdepth.detach())
+            mask = mlp_model(upsample_feature)
 
-            loss_mask = mask.clone().detach() > 0.2
+            loss_mask = mask.clone().detach() > 0.25
             loss_mask = -F.max_pool2d(-(loss_mask.float().unsqueeze(0)), kernel_size=7, stride=1, padding=3).squeeze(0)
 
             Ll1 = (loss_mask * torch.abs((image - gt_image))).mean()
             Lssim = (1.0 - ssim((loss_mask * image), (loss_mask * gt_image), size_average=False)).mean()
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * Lssim
-
-            # import torchvision.utils as tutils
-            # output_path = os.path.join("./try", args.model_path.split('/')[-1])
-            # os.makedirs(output_path, exist_ok=True)
-            # tutils.save_image(loss_mask.float(), os.path.join(output_path, f"{image_name}.png"))
-
+            
         # Depth regularization
         Ll1depth_pure = 0.0
-        Ll1depth = 0.0
+        if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
+            invDepth = render_pkg["depth"]
+            mono_invdepth = viewpoint_cam.invdepthmap.cuda()
+            depth_mask = viewpoint_cam.depth_mask.cuda()
 
-        # if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
-        #     invDepth = render_pkg["depth"]
-        #     mono_invdepth = viewpoint_cam.invdepthmap.cuda()
-        #     depth_mask = viewpoint_cam.depth_mask.cuda()
-
-        #     Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask).mean()
-        #     Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
-        #     loss += Ll1depth
-        #     Ll1depth = Ll1depth.item()
-        # else:
-        #     Ll1depth = 0
+            Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask).mean()
+            Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
+            loss += Ll1depth
+            Ll1depth = Ll1depth.item()
+        else:
+            Ll1depth = 0
 
         loss.backward()
 
@@ -218,26 +200,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             cosine = 1. - interpolation(cosine, image.shape[1], image.shape[2])
 
             reg_loss = 0.5 * mlp_model.get_regularizer()
-            #reg_loss += 2.0 * ((1-mask) * math.exp(-iteration / opt.beta_reg)).mean()
-            
-            prior_loss = (torch.abs(filtered_mask - mask)).mean() * math.exp(-iteration / 10000)
-
+            reg_loss += 2.0 * ((1-mask) * math.exp(-iteration / opt.beta_reg)).mean()
             residual_loss = mlp_model.get_residual_loss(mask.flatten(), lower_mask.flatten(), upper_mask.flatten())
-            cosine_loss = torch.abs(mask - cosine).mean()
 
-            robustness_loss = 0.5 * cosine_loss + 0.5 * residual_loss
-            
-            if(iteration <= opt.densify_from_iter):
-                robustness_loss = robustness_loss * math.exp((iteration - opt.densify_from_iter) / 10000)
-
-            mask_loss = robustness_loss + reg_loss + prior_loss
-
+            mask_loss = 0.5 * torch.abs(mask - cosine).mean() + 0.5 * residual_loss + reg_loss 
             mask_loss.backward()
-
-            import torchvision.utils as tutils
-            output_path = os.path.join("./try", args.model_path.split('/')[-1])
-            os.makedirs(output_path, exist_ok=True)
-            tutils.save_image(loss_mask.float(), os.path.join(output_path, f"{image_name}.png"))
             
             mlp_optimizer.step()
             mlp_optimizer.zero_grad(set_to_none=True)

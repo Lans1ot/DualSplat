@@ -127,7 +127,7 @@ def safe_state(silent):
 
     sys.stdout = F(silent)
 
-    random.seed(0)
-    np.random.seed(0)
-    torch.manual_seed(0)
+    random.seed(1)
+    np.random.seed(1)
+    torch.manual_seed(1)
     torch.cuda.set_device(torch.device("cuda:0"))

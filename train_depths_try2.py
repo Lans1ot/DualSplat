@@ -22,7 +22,8 @@ from scene import Scene, GaussianModel
 from utils.general_utils import safe_state, get_expon_lr_func
 from utils.mask_utils import MLPModel, calculate_residual_mask, interpolation
 from utils.mask_utils import MLPModel_2
-#from utils.mask_utils import DINOFinetune_FeatureExtractor as DINOFeatureExtractor
+# from utils.mask_utils import DINOFinetune_FeatureExtractor as DINOFeatureExtractor
+# from utils.mask_utils import DINOv3FeatureExtractor as DINOFeatureExtractor
 from utils.mask_utils import DINOFeatureExtractor
 import uuid
 from tqdm import tqdm

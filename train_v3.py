@@ -24,6 +24,7 @@ from utils.mask_utils import MLPModel, calculate_residual_mask, interpolation
 from utils.mask_utils import MLPModel_2
 #from utils.mask_utils import DINOFinetune_FeatureExtractor as DINOFeatureExtractor
 from utils.mask_utils import DINOFeatureExtractor
+# from utils.mask_utils import DINOv3FeatureExtractor as DINOFeatureExtractor
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
@@ -49,7 +50,7 @@ except:
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     
-    gaussiansN = 2
+    gaussiansN = 1
     GsDict = {}
     RenderDict = {}
 
@@ -180,7 +181,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 # import torchvision.utils as tutils
                 # output_path = os.path.join("./try", args.model_path.split('/')[-1])
                 # os.makedirs(output_path, exist_ok=True)
-                # tutils.save_image(loss_mask.float(), os.path.join(output_path, f"{image_name}.png"))
+                # tutils.save_image(RenderDict[f"loss_mask{i}"].float(), os.path.join(output_path, f"{image_name}"))
 
         # Depth regularization
         for i in range(gaussiansN):
@@ -359,7 +360,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
 
 if __name__ == "__main__":
     # Set up command line argument parser
-    print("train mlp with depth residual trial 2")
+    print("train mlp v2 with train.py v3")
     parser = ArgumentParser(description="Training script parameters")
     lp = ModelParams(parser)
     op = OptimizationParams(parser)

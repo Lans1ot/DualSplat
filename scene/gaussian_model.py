@@ -471,3 +471,201 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+
+    def init_distance_gated_voxel_pruning_from_cameras(
+        self,
+        cameras,
+        near_mult: float = 2,
+        far_mult: float = 3,
+        far_prune_prob: float = 0.00,
+        max_cameras_for_exact_diameter: int = 4096,
+    ):
+        if cameras is None or len(cameras) == 0:
+            raise ValueError("cameras list is empty")
+
+        device = self.get_xyz.device
+        cam_centers = torch.stack([cam.camera_center.detach() for cam in cameras], dim=0).to(
+            device=device, dtype=torch.float32
+        )
+
+        C = cam_centers.shape[0]
+        if C <= int(max_cameras_for_exact_diameter):
+            cam_diameter = torch.cdist(cam_centers, cam_centers).max()
+        else:
+            cam_min = cam_centers.min(dim=0).values
+            cam_max = cam_centers.max(dim=0).values
+            cam_diameter = torch.linalg.norm(cam_max - cam_min)
+
+        cam_diameter = cam_diameter.clamp_min(1e-6)
+
+        near_cutoff = cam_diameter * float(near_mult)
+        far_cutoff = cam_diameter * float(far_mult)
+        if far_cutoff <= near_cutoff:
+            far_cutoff = near_cutoff * 1.5
+
+        self._vg_cam_centers = cam_centers
+        self._vg_cam_diameter = cam_diameter
+        self._vg_near_cutoff = near_cutoff
+        self._vg_far_cutoff = far_cutoff
+        self._vg_far_prune_prob = float(max(0.0, min(1.0, far_prune_prob)))
+
+        # voxel-distance cache (key -> dmin)
+        self._vg_cache_voxel_size = None
+        self._vg_cache_keys = torch.empty((0,), device=device, dtype=torch.int64)
+        self._vg_cache_dmins = torch.empty((0,), device=device, dtype=torch.float32)
+
+
+    def prune_random_fixed_per_voxel_distance_gated(
+        self,
+        voxel_size: float,
+        remove_per_voxel: int = 1,
+        noise_std: float = 0.0,
+        dist_chunk_voxels: int = 8192,
+    ) -> int:
+        if remove_per_voxel <= 0:
+            return 0
+        if voxel_size <= 0:
+            raise ValueError(f"voxel_size must be > 0, got {voxel_size}")
+        if self.optimizer is None:
+            raise RuntimeError("optimizer is None. Call training_setup() before pruning.")
+        if not hasattr(self, "_vg_cam_centers"):
+            raise RuntimeError("Call init_distance_gated_voxel_pruning_from_cameras(cameras, ...) first.")
+
+        xyz = self.get_xyz.detach()
+        device = xyz.device
+        N = xyz.shape[0]
+        if N == 0:
+            return 0
+
+        # prune_points() hard dependency
+        if (not hasattr(self, "tmp_radii")) or (self.tmp_radii is None) or (self.tmp_radii.numel() != N):
+            self.tmp_radii = torch.zeros((N,), device=device)
+
+        # reset cache if voxel_size changed
+        if (not hasattr(self, "_vg_cache_voxel_size")) or (self._vg_cache_voxel_size is None) or (float(self._vg_cache_voxel_size) != float(voxel_size)):
+            self._vg_cache_voxel_size = float(voxel_size)
+            self._vg_cache_keys = torch.empty((0,), device=device, dtype=torch.int64)
+            self._vg_cache_dmins = torch.empty((0,), device=device, dtype=torch.float32)
+
+        # 1) noise for voxel assignment only
+        if noise_std and noise_std > 0:
+            xyz_for_voxel = xyz + torch.randn_like(xyz) * float(noise_std)
+        else:
+            xyz_for_voxel = xyz
+
+        # 2) voxelization
+        vs = torch.tensor(float(voxel_size), device=device, dtype=xyz_for_voxel.dtype)
+        grid = torch.floor(xyz_for_voxel / vs).to(torch.int64)                 # [N,3]
+        unique_grid, inv = torch.unique(grid, dim=0, return_inverse=True)      # unique_grid: [V,3], inv: [N]
+        voxel_id = inv.to(torch.int64)
+        V = unique_grid.shape[0]
+        if V == 0:
+            return 0
+
+        voxel_centers = (unique_grid.to(torch.float32) + 0.5) * float(voxel_size)  # [V,3]
+
+        # 3) encode voxel integer coords to int64 keys (range-limited)
+        MAX_ABS = (1 << 20) - 1
+        use_cache = (unique_grid.abs().max().item() <= MAX_ABS)
+
+        if use_cache:
+            bias = 1 << 20
+            g = unique_grid + bias
+            if (g.min().item() < 0) or (g.max().item() >= (1 << 21)):
+                use_cache = False
+
+        if use_cache:
+            gx = g[:, 0].to(torch.int64)
+            gy = g[:, 1].to(torch.int64)
+            gz = g[:, 2].to(torch.int64)
+            keys = (gx << 42) | (gy << 21) | gz  # [V] int64
+
+            cached_keys = self._vg_cache_keys
+            cached_dmins = self._vg_cache_dmins
+
+            if cached_keys.numel() == 0:
+                dmins = self._compute_voxel_nearest_camera_dist_(voxel_centers, dist_chunk_voxels)
+                sp = torch.argsort(keys)
+                self._vg_cache_keys = keys[sp].contiguous()
+                self._vg_cache_dmins = dmins[sp].contiguous()
+            else:
+                idx = torch.searchsorted(cached_keys, keys)
+                idx_clamped = idx.clamp(0, cached_keys.numel() - 1)
+                hit = (idx < cached_keys.numel()) & (cached_keys[idx_clamped] == keys)
+
+                dmins = torch.empty((V,), device=device, dtype=torch.float32)
+                if hit.any():
+                    dmins[hit] = cached_dmins[idx[hit]]
+
+                miss = ~hit
+                if miss.any():
+                    miss_idx = torch.nonzero(miss, as_tuple=False).squeeze(1)
+                    dmins_miss = self._compute_voxel_nearest_camera_dist_(voxel_centers[miss_idx], dist_chunk_voxels)
+                    dmins[miss_idx] = dmins_miss
+
+                    # merge cache (append then sort then unique_consecutive)
+                    new_keys = torch.cat([cached_keys, keys[miss_idx]], dim=0)
+                    new_dmins = torch.cat([cached_dmins, dmins_miss], dim=0)
+                    sp = torch.argsort(new_keys)
+                    new_keys = new_keys[sp]
+                    new_dmins = new_dmins[sp]
+                    uniq_keys, counts = torch.unique_consecutive(new_keys, return_counts=True)
+                    starts = torch.cumsum(counts, 0) - counts
+                    uniq_dmins = new_dmins[starts]
+                    self._vg_cache_keys = uniq_keys.contiguous()
+                    self._vg_cache_dmins = uniq_dmins.contiguous()
+        else:
+            dmins = self._compute_voxel_nearest_camera_dist_(voxel_centers, dist_chunk_voxels)
+
+        # 4) map distance -> pruning probability (near:1, far:far_prob)
+        near_cut = self._vg_near_cutoff.to(device=device, dtype=torch.float32)
+        far_cut = self._vg_far_cutoff.to(device=device, dtype=torch.float32)
+        far_prob = float(self._vg_far_prune_prob)
+
+        denom = (far_cut - near_cut).clamp_min(1e-6)
+        t = ((dmins - near_cut) / denom).clamp(0.0, 1.0)
+        p_prune = (1.0 - t) + t * far_prob
+        active_voxel = torch.rand((V,), device=device) < p_prune
+
+        # 5) randomize within each voxel and delete fixed number for active voxels
+        BASE = 1 << 32
+        rand32 = torch.randint(0, BASE, (N,), device=device, dtype=torch.int64)
+        k = voxel_id * BASE + rand32
+        perm = torch.argsort(k)
+        voxel_sorted = voxel_id[perm]
+
+        voxel_unique_sorted, counts = torch.unique_consecutive(voxel_sorted, return_counts=True)
+        if counts.numel() == 0:
+            return 0
+
+        active_voxel_sorted = active_voxel[voxel_unique_sorted]
+        active_sorted = torch.repeat_interleave(active_voxel_sorted, counts)
+
+        starts = torch.cumsum(counts, 0) - counts
+        starts_rep = torch.repeat_interleave(starts, counts)
+        pos_in_seg = torch.arange(N, device=device) - starts_rep
+        del_sorted = (pos_in_seg < int(remove_per_voxel)) & active_sorted
+
+        del_idx = perm[del_sorted]
+        prune_mask = torch.zeros((N,), device=device, dtype=torch.bool)
+        prune_mask[del_idx] = True
+
+        num_pruned = int(prune_mask.sum().item())
+        if num_pruned == 0:
+            return 0
+
+        self.prune_points(prune_mask)
+        return num_pruned
+
+
+    def _compute_voxel_nearest_camera_dist_(self, voxel_centers_f32: torch.Tensor, chunk: int = 8192) -> torch.Tensor:
+        cam = self._vg_cam_centers.to(device=voxel_centers_f32.device, dtype=torch.float32)
+        V = voxel_centers_f32.shape[0]
+        outs = []
+        for s in range(0, V, int(chunk)):
+            p = voxel_centers_f32[s : s + int(chunk)]
+            diff = p[:, None, :] - cam[None, :, :]
+            d2 = (diff * diff).sum(dim=-1)
+            dmin = torch.sqrt(d2.min(dim=1).values)
+            outs.append(dmin)
+        return torch.cat(outs, dim=0)

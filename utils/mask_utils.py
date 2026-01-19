@@ -3,6 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import warnings
 
+import timm
+from torchvision import transforms
+from torchvision.transforms import functional as TF
+from torchvision.transforms import InterpolationMode
+
 warnings.filterwarnings("ignore", message=".*xFormers.*")
 
 class DINOFinetune_FeatureExtractor(nn.Module):
@@ -126,3 +131,70 @@ def calculate_residual_mask(gt, render, cum_hist, lower_bound=0.6, upper_bound=0
 
 def interpolation(tensor, height, width, type='bilinear'):
     return F.interpolate(tensor.cuda().unsqueeze(0), size=(height, width), mode=type).squeeze(0)
+
+class ResizeToMultiple(nn.Module):
+    def __init__(self, multiple: int = 16,
+                 interpolation: InterpolationMode = InterpolationMode.BICUBIC,
+                 antialias: bool = True):
+        super().__init__()
+        self.multiple = multiple
+        self.interpolation = interpolation
+        self.antialias = antialias
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [C,H,W]
+        h, w = x.shape[-2], x.shape[-1]
+        m = self.multiple
+        new_h = ((h + m - 1) // m) * m
+        new_w = ((w + m - 1) // m) * m
+        if new_h == h and new_w == w:
+            return x
+        return TF.resize(
+            x, size=[new_h, new_w],
+            interpolation=self.interpolation,
+            antialias=self.antialias,
+        )
+
+class DINOv3FeatureExtractor(nn.Module):
+    def __init__(self, device: str = "cuda"):
+        super().__init__()
+        self.model = timm.create_model(
+            "vit_small_patch16_dinov3.lvd1689m",
+            pretrained=True,
+            features_only=True,
+        ).to(device).eval()
+
+        # patch size (vit_small_patch16 -> 16)
+        ps = getattr(getattr(self.model, "patch_embed", None), "patch_size", 16)
+        if isinstance(ps, (tuple, list)):
+            ps = ps[0]
+        self.patch_size = int(ps)
+
+        # transform: (dtype/scale) -> resize to multiple-of-16 -> normalize
+        self.transform = transforms.Compose([
+            transforms.ConvertImageDtype(torch.float32),  # uint8 -> float in [0,1]；float则保持
+            ResizeToMultiple(multiple=self.patch_size,
+                             interpolation=InterpolationMode.BICUBIC,
+                             antialias=True),
+            transforms.Normalize(
+                mean=[0.4850, 0.4560, 0.4060],
+                std=[0.2290, 0.2240, 0.2250],
+            ),
+        ])
+
+    @torch.no_grad()
+    def forward(self, image: torch.Tensor, feature_size = 50) -> torch.Tensor:
+        """
+        image: [3,H,W] or [B,3,H,W]
+        return: [B, C, H//16, W//16]
+        """
+        if image.dim() == 3:
+            image = self.transform(image).unsqueeze(0)  # [1,3,H',W']
+        else:
+            image = torch.stack([self.transform(im) for im in image], dim=0)  # [B,3,H',W']
+
+        # feature_height = feature_width = feature_size
+        # gt_img = F.interpolate(image, size=(feature_height * 14, feature_width * 14), mode='bilinear', align_corners=False)
+
+        feature = self.model(image)[-1]
+        return feature.squeeze()

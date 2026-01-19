@@ -51,7 +51,7 @@ class ModelParams(ParamGroup):
         self._model_path = ""
         self._images = "images"
         self.filtered_masks = "my_masks"
-        self.origin_masks = "masks"
+        self.origin_masks = "masks_ori_sam"
 
         self._depths = ""
         self._resolution = -1
@@ -95,10 +95,13 @@ class OptimizationParams(ParamGroup):
         self.exposure_lr_delay_mult = 0.0
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2
-        self.densification_interval = 100
+        # self.densification_interval = 100
+        self.densification_interval = 1000
         self.opacity_reset_interval = 3000
-        self.densify_from_iter = 10_000
-        self.densify_until_iter = 20_000
+        # self.densify_from_iter = 10_000
+        self.densify_from_iter = 3_000
+        # self.densify_until_iter = 20_000
+        self.densify_until_iter = 25_000
         self.densify_grad_threshold = 0.0002
         self.depth_l1_weight_init = 1.0
         self.depth_l1_weight_final = 0.01
@@ -118,6 +121,10 @@ class OptimizationParams(ParamGroup):
         self.coprune_interval = 500
         self.coprune_threshold = 5
         self.feat_res = 32
+        self.voxel_size = 0.3
+        self.remove_per_voxel = 1
+        self.remove_begin = 15000
+        self.remove_interval = 3000
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):
