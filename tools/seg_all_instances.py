@@ -358,7 +358,7 @@ def main() -> None:
             return
             
         # Output directory
-        output_dir = os.path.join(args.image_dir, 'masks')
+        output_dir = os.path.join(args.image_dir, 'sam_masks')
         os.makedirs(output_dir, exist_ok=True)
         
         image_paths.sort()

@@ -1,0 +1,23 @@
+name: dualsplat
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - cudatoolkit=12.1
+  - plyfile
+  - python=3.10.16
+  - pip
+  - pytorch=2.6.0
+  - torchaudio=2.6.0
+  - torchvision=0.21.0
+  - tqdm
+  - tensorboard
+  - mediapy
+  - pip:
+    - submodules/diff-gaussian-rasterization
+    - submodules/simple-knn
+    - submodules/fused-ssim
+    - submodules/sam2
+    - opencv-python
+    - joblib

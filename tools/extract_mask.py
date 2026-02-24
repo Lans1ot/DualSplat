@@ -254,25 +254,18 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_name", type=str)
-parser.add_argument("--dataset_name", type=str)
 parser.add_argument("--root", type=str)
 parser.add_argument("--masks", type=str)
 parser.add_argument("--iteration", type=int, default=10000)
-parser.add_argument("--output_folder", type=str, default="masks")
+parser.add_argument("--output_folder", type=str, default="pseudo_masks")
 parser.add_argument("--sim_folder", type=str, default="dino")
 parser.add_argument("--tau1", type=float, default=0.75)
 parser.add_argument("--tau2", type=float, default=0.05)
 args = parser.parse_args()
 
-# model_name = "patio"
-# dataset_name = "patio"
-
 model_name = args.model_name
 output_folder = args.output_folder
 sim_folder = args.sim_folder
-dataset_name = args.dataset_name
-if dataset_name is None:
-    dataset_name = model_name
 iteration = args.iteration
 
 

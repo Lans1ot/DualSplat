@@ -50,8 +50,8 @@ class ModelParams(ParamGroup):
         self._source_path = ""
         self._model_path = ""
         self._images = "images"
-        self.filtered_masks = "my_masks"
-        self.origin_masks = "masks_ori_sam"
+        self.filtered_masks = "pseudo_masks"
+        self.origin_masks = "sam_masks"
 
         self._depths = ""
         self._resolution = -1
