@@ -1,0 +1,13 @@
+*.pyc
+.vscode
+output*
+build
+diff_rasterization/diff_rast.egg-info
+diff_rasterization/dist
+simple-knn/simple_knn.egg-info
+simple-knn/build
+tensorboard_3d
+screenshots
+generated_mask*
+test
+try*

@@ -197,18 +197,6 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
         depths_folder=os.path.join(path, depths) if depths != "" else "", test_cam_names_list=test_cam_names_list)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
     
-    train_list_file = os.path.join(path, "train_list.txt")
-    test_list_file = os.path.join(path, "test_list.txt")
-
-    with open(train_list_file, 'r') as f:
-        train_list = set([os.path.splitext(name)[0] for name in f.read().splitlines()])
-        print("train_list: ", train_list)
-
-    with open(test_list_file, 'r') as f:
-        test_list = set([os.path.splitext(name)[0] for name in f.read().splitlines()])
-        print("test_list: ", test_list)
-
-
     # # try load data split like robustnerf
     # train_keyword = "clutter"
     # test_keyword = "extra"
@@ -218,8 +206,22 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
     #     train_cam_infos = [c for c in cam_infos if train_test_exp or not c.is_test]
     #     test_cam_infos = [c for c in cam_infos if c.is_test]
         #
-    train_cam_infos = [cam for cam in cam_infos if cam.image_name.split('.')[0] in train_list]
-    test_cam_infos = [cam for cam in cam_infos if cam.image_name.split('.')[0] in test_list]
+    if eval:
+        train_list_file = os.path.join(path, "train_list.txt")
+        test_list_file = os.path.join(path, "test_list.txt")
+
+        with open(train_list_file, 'r') as f:
+            train_list = set([os.path.splitext(name)[0] for name in f.read().splitlines()])
+            print("train_list: ", train_list)
+
+        with open(test_list_file, 'r') as f:
+            test_list = set([os.path.splitext(name)[0] for name in f.read().splitlines()])
+            print("test_list: ", test_list)
+        train_cam_infos = [cam for cam in cam_infos if cam.image_name.split('.')[0] in train_list]
+        test_cam_infos = [cam for cam in cam_infos if cam.image_name.split('.')[0] in test_list]
+    else:
+        train_cam_infos = cam_infos
+        test_cam_infos = []
 
     print(f"Splitting training cameras: {len(train_cam_infos)}/{len(cam_infos)}")
     print(f"Splitting test cameras: {len(test_cam_infos)}/{len(cam_infos)}")
