@@ -11,6 +11,7 @@ from torchvision.transforms import InterpolationMode
 warnings.filterwarnings("ignore", message=".*xFormers.*")
 
 class DINOFinetune_FeatureExtractor(nn.Module):
+    # not used
     def __init__(self, max_size=952):
         super(DINOFinetune_FeatureExtractor, self).__init__()
         self.max_size = max_size
@@ -32,8 +33,8 @@ class DINOFinetune_FeatureExtractor(nn.Module):
 class DINOFeatureExtractor(nn.Module):
     def __init__(self):
         super(DINOFeatureExtractor, self).__init__()
-        #self.dinov2_model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')
-        self.dinov2_model = torch.hub.load("/home/wangxu/.cache/torch/hub/facebookresearch_dinov2_main", "dinov2_vits14_reg", source="local")
+        self.dinov2_model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg')
+        # self.dinov2_model = torch.hub.load("/home/wangxu/.cache/torch/hub/facebookresearch_dinov2_main", "dinov2_vits14_reg", source="local")
 
         self.dinov2_model = self.dinov2_model.cuda()
         self.dinov2_model.eval()
