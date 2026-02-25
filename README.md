@@ -2,7 +2,12 @@
 
 ---
 
-[[dataset]]() [[pointclouds]]() [[pseudo masks]]()
+[[dataset](google pan)](https://drive.google.com/drive/folders/1_CEsQUOfd8yRpmEQshWy8ZxMrVqwc1GD?usp=drive_link) [[pointclouds(google pan)]](https://drive.google.com/drive/folders/1_CEsQUOfd8yRpmEQshWy8ZxMrVqwc1GD?usp=drive_link)
+
+[[dataset(baidu pan)]](https://pan.baidu.com/s/1N5s6LBtEjUmh8BJxbFG6-A?pwd=sknf) [[pointclouds(baidu pan)]](https://pan.baidu.com/s/15t4rU8dGYRRMfF8Mh57z0g?pwd=tyau)
+
+For storage limitaion, if you need full dataset, please download it from baidu pan or use colmap to regenerate it.
+
 
 **we are working to release the code**
 
@@ -46,6 +51,8 @@ DATASET_PATH/
 ├── train_list.txt  # train views
 └── test_list.txt   # test views
 ```
+
+For relesed datasets which are mention above, `pseudo_masks` is named as `masks_npy`
 
 #### Stage-1
 
