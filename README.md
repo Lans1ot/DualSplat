@@ -39,7 +39,7 @@ python tools/seg_all_instances.py --model_checkpoint CHECKPOINTS_PATH/sam2_hiera
 
 You can modified the parameters of sam2 in the code and to set input\output folders position. It is recommended input downsampled images into sam2 to speed up.
 
-For depths regulariztion, you can follow the [3DGS](https://github.com/graphdeco-inria/gaussian-splatting) to prepare.
+For **depths generation and  regulariztion**, you can follow the [3DGS](https://github.com/graphdeco-inria/gaussian-splatting) to prepare.
 
 ```txt
 DATASET_PATH/
