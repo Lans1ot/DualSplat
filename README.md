@@ -13,9 +13,19 @@ For storage limitaion, if you need full dataset, please download it from baidu p
 
 ### Environment
 
-Similar as 3DGS and RobustSplat. Please refer to `environment.yaml`
+Similar as 3DGS and RobustSplat. Please modify the package version to suit your own CUDA. This repo is using CUDA 12.X.
 
-> `environment.yaml` has not been tested
+```bash
+conda create -n dualsplat python=3.10
+conda activate dualsplat
+
+pip install torch torchaudio torchvision
+pip install tqdm plyfile opencv-python joblib matplotlib scipy albumentations timm
+
+pip install ./submodules/diff-gaussian-rasterization/ --no-build-isolation  
+pip install ./submodules/simple-knn/ --no-build-isolation
+pip install ./submodules/sam2/ --no-build-isolation
+```
 
 ### For training
 

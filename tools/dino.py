@@ -50,7 +50,7 @@ def main():
     root = args.root
     gt_dir = os.path.join(root, "gt")
     ren_dir = os.path.join(root, "renders")
-    out_dir = os.path.join(root, "dino_try")
+    out_dir = os.path.join(root, "dino")
     os.makedirs(out_dir, exist_ok=True)
 
     exts = tuple(e.strip().lower() for e in args.exts.split(",") if e.strip())

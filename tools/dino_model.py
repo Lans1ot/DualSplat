@@ -45,8 +45,8 @@ class Dino:
         self._load_model()
 
     def _load_model(self):
-        # fine_model = torch.hub.load("ywyue/FiT3D", "dinov2_reg_small_fine")
-        fine_model = torch.hub.load("/home/wangxu/.cache/torch/hub/ywyue_FiT3D_main", "dinov2_reg_small_fine", source="local")
+        fine_model = torch.hub.load("ywyue/FiT3D", "dinov2_reg_small_fine")
+        # fine_model = torch.hub.load("/home/wangxu/.cache/torch/hub/ywyue_FiT3D_main", "dinov2_reg_small_fine", source="local")
         self.fine_model=fine_model
 
     def to(self, device):
