@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="description"
+        content="DualSplat: Robust 3D Gaussian Splatting via Pseudo-Mask Bootstrapping from Reconstruction Failures">
+  <meta name="keywords" content="3D Gaussian Splatting, Robust Reconstruction, Transient Object Removal, Pseudo Mask">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DualSplat: Robust 3D Gaussian Splatting via Pseudo-Mask Bootstrapping from Reconstruction Failures</title>
+
+  <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro"
+        rel="stylesheet">
+
+  <link rel="stylesheet" href="./static/css/bulma.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-carousel.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-slider.min.css">
+  <link rel="stylesheet" href="./static/css/fontawesome.all.min.css">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="./static/css/index.css">
+  <!-- <link rel="icon" href="">  -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎈</text></svg>">
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <script defer src="./static/js/fontawesome.all.min.js"></script>
+  <script src="./static/js/bulma-carousel.min.js"></script>
+  <script src="./static/js/bulma-slider.min.js"></script>
+  <script src="./static/js/index.js"></script>
+  <link href="static/css/twentytwenty.css" rel="stylesheet" type="text/css" />
+</head>
+<body>
+
+
+<section class="hero">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered">
+        <div class="column has-text-centered">
+          <h1 class="title is-1 publication-title">DualSplat: Robust 3D Gaussian Splatting via Pseudo-Mask Bootstrapping from Reconstruction Failures</h1>
+          <div class="is-size-5 publication-authors">
+            <span class="author-block">
+              Xu Wang<sup>1</sup>,</span>
+            <span class="author-block">
+              Zhiru Wang<sup>1</sup>,</span>
+            <span class="author-block">
+              Shiyun Xie<sup>1</sup>,
+            </span>
+            <span class="author-block">
+              Chengwei Pan<sup>1†</sup>,
+            </span>
+            <span class="author-block">
+              Yisong Chen<sup>2</sup>
+            </span>
+          </div>
+
+          <div class="is-size-5 publication-authors">
+            <span class="author-block"><sup>1</sup>Beihang University,</span>
+            <span class="author-block"><sup>2</sup>Peking University</span>
+          </div>
+          <div class="is-size-6 publication-authors">
+            <span class="author-block"><sup>†</sup>Corresponding author</span>
+          </div>
+
+          <div class="column has-text-centered">
+            <div class="publication-links">
+              <span class="link-block">
+                <a href="#"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                      <i class="ai ai-arxiv"></i>
+                  </span>
+                  <span>arXiv (TBD)</span>
+                </a>
+              </span>
+              <span class="link-block">
+                <a href="https://github.com/Lans1ot/DualSplat"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                      <i class="fab fa-github"></i>
+                  </span>
+                  <span>Code</span>
+                  </a>
+              </span>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" style="margin-top: -50px;">
+    <div class="container is-max-desktop">
+      <!-- TLDR. -->
+      <div class="content" style="display: flex;">
+          <!-- <h2 class="title is-5" style="margin-right: 10px; white-space: nowrap; letter-spacing: -2px;">
+            <span style="color: red;">T</span>
+            <span style="color: blue;">L</span>
+            <span style="color: green;">D</span>
+            <span style="color: orange;">R</span>
+            <span style="color: black;">:</span>
+            </h2> -->
+          <div class="content has-text-justified">
+            <p>
+                <b>DualSplat breaks the circular dependency between transient detection and static scene reconstruction through a two-stage pipeline: pseudo-mask bootstrapping from first-pass reconstruction failures, followed by pseudo-mask-guided clean 3DGS optimization.</b>
+            </p>
+          </div>
+      </div>
+      <!--/ TLDR. -->
+    </div>
+  </section>
+
+<section class="teaser">
+  <div class="container is-max-desktop">
+    <div class="columns is-vcentered interpolation-panel">
+        <img src="asset/firstpage_from_pdf.png" alt="First page" style="width: 100%; height: auto;">
+    </div>
+  </div>
+</section>
+
+
+<section class="section">
+  <div class="container is-max-desktop">
+    <!-- Abstract. -->
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Abstract</h2>
+        <div class="content has-text-justified">
+          <p>
+            3D Gaussian Splatting achieves real-time photorealistic rendering but struggles when training images contain transient objects that violate multi-view consistency. Existing methods face a fundamental dilemma: accurate transient detection requires well-reconstructed static scenes, yet clean reconstruction depends on reliable transient masks. This circular dependency causes artifacts when both components are jointly optimized from poor initialization. We present <span class="dnerf">DualSplat</span>, a two-stage framework which sidesteps this dilemma by first generating pseudo-masks from reconstruction failures, then using them to guide clean scene optimization. We consolidate these failures into pseudo-masks via instance-level thresholding and a feature-residual filter guided by SAM2 boundaries. Then we train a clean 3DGS model under pseudo-mask supervision, with a lightweight MLP refining masks online by progressively shifting from pseudo-priors to self-consistency as densification proceeds. Experiments on RobustNeRF and NeRF On-the-go demonstrate that DualSplat achieves competitive performance with recent methods, with particularly strong results on scenes with high transient density.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="has-text-centered" >
+      <h2 class="title is-3">Pipeline</h2>
+      <div class="columns is-four-fifths">
+        <img src="asset/pipeline_from_pdf.png" style="width: 80%; height: auto; margin: 0 auto;" alt="Pipeline">
+      </div>
+        <p>DualSplat uses a two-stage robust reconstruction strategy: first-pass conservative reconstruction with pseudo-mask extraction, then pseudo-mask-guided second-pass optimization with online mask refinement.</p>
+    </div>
+  </div>
+</section>
+
+
+
+<!--Visuals-->
+<section class="section">
+    <div class="container hero-body">
+        <div class="column has-text-centered">
+            <h2 class="title is-3">Qualitative Visuals</h2>
+        </div>
+        <!--RGB/Depths/Normals-->
+        <p><strong>Pseudo Masks visualization:</strong> We visualize the pseudo-masks generated by our method.</p>
+        <div class="columns is-centered is-gapless">
+            <div class="column is-one-third has-text-centered">
+                <div class="twentytwenty-container twentytwenty-custom">
+                    <img src="asset/pseudo_masks/corner_gt.png" alt="Gt">
+                    <img src="asset/pseudo_masks/corner_pseudo.png" alt="Pseudo Mask">
+                    <img src="asset/pseudo_masks/corner_render.png" alt="Render">
+                </div>
+            </div>
+
+            <div class="column is-one-third has-text-centered">
+                <div class="twentytwenty-container twentytwenty-custom">
+                    <img src="asset/pseudo_masks/fountain_gt.png" alt="Gt">
+                    <img src="asset/pseudo_masks/fountain_pseudo.png" alt="Pseudo Mask">
+                    <img src="asset/pseudo_masks/fountain_render.png" alt="Render">
+                </div>
+            </div>
+
+            <div class="column is-one-third has-text-centered">
+                <div class="twentytwenty-container twentytwenty-custom">
+                    <img src="asset/pseudo_masks/android_gt.png" alt="Gt">
+                    <img src="asset/pseudo_masks/android_pseudo.png" alt="Pseudo Mask">
+                    <img src="asset/pseudo_masks/android_render.png" alt="Render">
+                </div>
+            </div>
+
+        </div>
+
+        <p><strong>Baseline comparisons:</strong> We visualize renderings compared to baseline methods.</p>
+
+        <div class="columns is-centered is-gapless is-multiline">
+          <div class="column is-one-third has-text-centered">
+                <div class="twentytwenty-container twentytwenty-custom">
+                    <img src="asset/images/corner_gt.png" alt="Gt">
+                    <img src="asset/images/corner_3dgs.png" alt="3DGS">
+                    <img src="asset/images/corner_ds_right.png" alt="DeSplat">
+                    <img src="asset/images/corner_ours.png" alt="DualSplat">
+                </div>
+          </div>
+
+          <div class="column is-one-third has-text-centered">
+                <div class="twentytwenty-container twentytwenty-custom">
+                    <img src="asset/images/fountain_gt.png" alt="Gt">
+                    <img src="asset/images/fountain_3dgs.png" alt="3DGS">
+                    <img src="asset/images/fountain_ds_right.png" alt="DeSplat">
+                    <img src="asset/images/fountain_ours.png" alt="DualSplat">
+                </div>
+          </div>
+
+          <div class="column is-one-third has-text-centered">
+                <div class="twentytwenty-container twentytwenty-custom">
+                    <img src="asset/images/patiohigh_gt.png" alt="Gt">
+                    <img src="asset/images/patiohigh_3dgs.png" alt="3DGS">
+                    <img src="asset/images/patiohigh_ds_right.png" alt="DeSplat">
+                    <img src="asset/images/patiohigh_ours.png" alt="DualSplat">
+                </div>
+          </div>
+
+          <div class="column is-one-third has-text-centered">
+                <div class="twentytwenty-container twentytwenty-custom">
+                    <img src="asset/images/spot_gt.png" alt="Gt">
+                    <img src="asset/images/spot_3dgs.png" alt="3DGS">
+                    <img src="asset/images/spot_ds_right.png" alt="DeSplat">
+                    <img src="asset/images/spot_ours.png" alt="DualSplat">
+                </div>
+          </div>
+          <div class="column is-one-third has-text-centered">
+                <div class="twentytwenty-container twentytwenty-custom">
+                    <img src="asset/images/android_gt.png" alt="Gt">
+                    <img src="asset/images/android_rs.png" alt="RoubustSplat">
+                    <img src="asset/images/android_ds_right.png" alt="DeSplat">
+                    <img src="asset/images/android_ours.png" alt="DualSplat">
+                </div>
+          </div>
+          <div class="column is-one-third has-text-centered">
+                <div class="twentytwenty-container twentytwenty-custom">
+                    <img src="asset/images/statue_gt.png" alt="Gt">
+                    <img src="asset/images/statue_rs.png" alt="RoubustSplat">
+                    <img src="asset/images/statue_ds_right.png" alt="DeSplat">
+                    <img src="asset/images/statue_ours.png" alt="DualSplat">
+                </div>
+          </div>
+        </div>
+    </div>
+</section>
+
+
+<section class="hero is-light is-small">
+  <div class="hero-body has-text-centered">
+    <h2 class="title is-3">Videos</h2>
+    <div class="container is-max-desktop">
+      <p><strong>Interpolation from test viewpoints:</strong></p>
+      <div class="columns is-centered">
+        <div class="column is-half has-text-centered">
+          <video autoplay controls muted loop playsinline style="width: 100%; height: auto;">
+            <source src="asset/videos/android_result.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+          </video>
+        </div>
+        <div class="column is-half has-text-centered">
+          <video autoplay controls muted loop playsinline style="width: 100%; height: auto;">
+            <source src="asset/videos/spot_result.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+          </video>
+        </div>
+      </div>
+
+      <p><strong>Training viewpoints and pseudo masks:</strong></p>
+      <div class="columns is-centered">
+        <div class="column is-full has-text-centered">
+          <video autoplay controls muted loop playsinline style="width: 100%; height: auto;">
+            <source src="asset/videos/android_web.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+          </video>
+        </div>
+      </div>
+
+      <div class="columns is-centered">
+        <div class="column is-full has-text-centered">
+          <video autoplay controls muted loop playsinline style="width: 100%; height: auto;">
+            <source src="asset/videos/patio_high_web.mp4" type="video/mp4">
+            Your browser does not support the video tag.
+          </video>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="BibTeX">
+  <div class="container is-max-desktop content">
+    <h2 class="title">BibTeX</h2>
+    <pre><code>Generating...</code></pre> 
+  </div>
+</section>
+
+
+<footer class="footer">
+  <div class="container">
+    <div class="columns is-centered">
+      <div class="column is-8">
+        <div class="content has-text-centered">
+          <p>
+            This website is licensed under a <a rel="license"
+                                                href="http://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a> 
+            and is based on the <a
+            href="https://aaltoml.github.io/desplat/">DeSplat</a> website. 
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<!-- Bootstrap core JavaScript -->
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.0/jquery.min.js"></script>
+<script src="static/css/bootstrap.min.js"></script>
+<!-- <script src="/js/offcanvas.js"></script> -->
+<script src="static/css/jquery.event.move.js"></script>
+<script src="static/css/jquery.twentytwenty.js"></script>
+
+<script>
+    $(window).load(function () { $(".twentytwenty-container").twentytwenty({ default_offset_pct: 0.5 }); });
+</script>
+
+</body>
+</html>
