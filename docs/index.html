@@ -128,7 +128,13 @@
         <h2 class="title is-3">Abstract</h2>
         <div class="content has-text-justified">
           <p>
-            3D Gaussian Splatting achieves real-time photorealistic rendering but struggles when training images contain transient objects that violate multi-view consistency. Existing methods face a fundamental dilemma: accurate transient detection requires well-reconstructed static scenes, yet clean reconstruction depends on reliable transient masks. This circular dependency causes artifacts when both components are jointly optimized from poor initialization. We present <span class="dnerf">DualSplat</span>, a two-stage framework which sidesteps this dilemma by first generating pseudo-masks from reconstruction failures, then using them to guide clean scene optimization. We consolidate these failures into pseudo-masks via instance-level thresholding and a feature-residual filter guided by SAM2 boundaries. Then we train a clean 3DGS model under pseudo-mask supervision, with a lightweight MLP refining masks online by progressively shifting from pseudo-priors to self-consistency as densification proceeds. Experiments on RobustNeRF and NeRF On-the-go demonstrate that DualSplat achieves competitive performance with recent methods, with particularly strong results on scenes with high transient density.
+            While 3D Gaussian Splatting (3DGS) achieves real-time photorealistic rendering, its performance degrades significantly when training images contain transient objects that violate multi-view consistency. 
+            Existing methods face a circular dependency: accurate transient detection requires a well-reconstructed static scene, while clean reconstruction itself depends on reliable transient masks. 
+            We address this challenge with DualSplat, a Failure-to-Prior framework that converts first-pass reconstruction failures into explicit priors for a second reconstruction stage. 
+            We observe that transients, which appear in only a subset of views, often manifest as incomplete fragments during conservative initial training.
+            We exploit these failures to construct object-level pseudo-masks by combining photometric residuals, feature mismatches, and SAM2 instance boundaries.
+            These pseudo-masks then guide a clean second-pass 3DGS optimization, while a lightweight MLP refines them online by gradually shifting from prior supervision to self-consistency. 
+            Experiments on RobustNeRF and NeRF On-the-go show that DualSplat outperforms existing baselines, demonstrating particularly clear advantages in transient-heavy scenes and transient regions.
           </p>
         </div>
       </div>
